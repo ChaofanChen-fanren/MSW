@@ -39,6 +39,7 @@ class MVTecSolver(object):
         with open(self.meta_path, 'w') as f:
             f.write(json.dumps(info, indent=4) + "\n")
 
+
 if __name__ == '__main__':
     runner = MVTecSolver(root='data/mvtec')
     runner.run()

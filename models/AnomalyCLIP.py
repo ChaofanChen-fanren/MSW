@@ -6,8 +6,8 @@ from models import clip
 from models.clip import get_model_config
 from models.text_encoder import TextEncoder
 from models.modules import CovLayer, LinearLayer, Adapter
-from models.prompt_learner import PromptLearner_normal, PromptLearner_abnormal
-from common import status_normal, status_abnormal, cls_map, positions_list
+from models.prompt_learner import PromptLearnerNormal, PromptLearnerAbnormal
+from common import positions_list
 from torch.nn import functional as F
 
 
@@ -47,6 +47,7 @@ class AnomalyCLIP(nn.Module):
         # self.clip_model, _, self.preprocess = clip.create_model_and_transforms(
         #     model_name=clip_model_name, pretrained=clip_pretrained_path, img_size=clip_image_size, jit=True,
         # )
+
         # openai
         self.clip_model, _, self.preprocess = clip.create_model_and_transforms(
             model_name=clip_model_name, pretrained="openai", img_size=clip_image_size,
@@ -55,49 +56,30 @@ class AnomalyCLIP(nn.Module):
         self.tokenizer = clip.get_tokenizer(clip_model_name)  # get tokenizer by clip model name
         self.text_encoder = TextEncoder(self.clip_model)
         self.text_encoder.eval()
-
-        self.feature_list = self.args["featrues_list"]
+        
+        # TODO: rewrite feature list
+        self.feature_list = self.args.features_list
         self.decoder_conv = CovLayer(1024, 768, 3)  # decode image features by different shape convolution
         self.decoder_linear = LinearLayer(1024, 768, 4)  # decode image features by full connection
-
 
         # TODO rewrite learnable prompt
         if isinstance(learn_prompt_cfg, dict):
             learn_prompt_cfg = LearnPromptCfg(**learn_prompt_cfg)
 
-        self.normal_prompt_learner = PromptLearner_normal(
+        self.normal_prompt_learner = PromptLearnerNormal(
             tokenizer=self.tokenizer,
             token_embedding=self.clip_model.token_embedding,
             dataset=learn_prompt_cfg.dataset,
             feature_dim=learn_prompt_cfg.feature_dim,
             n_ctx=learn_prompt_cfg.n_ctx,
         )
-        self.abnormal_prompt_learner = PromptLearner_abnormal(
+        self.abnormal_prompt_learner = PromptLearnerAbnormal(
             tokenizer=self.tokenizer,
             token_embedding=self.clip_model.token_embedding,
             dataset=learn_prompt_cfg.dataset,
             feature_dim=learn_prompt_cfg.feature_dim,
             n_ctx=learn_prompt_cfg.n_ctx,
         )
-        # self.normal_prompt_learner = PromptLearner_normal(
-        #     visa_obj_list,
-        #     status_normal,
-        #     self.clip_model,
-        #     self.tokenizer,
-        #     768,
-        #     args['n_ctx'],
-        #     device
-        # )
-
-        # self.abnormal_prompt_learner = PromptLearner_abnormal(
-        #     visa_obj_list,
-        #     status_abnormal,
-        #     self.clip_model,
-        #     self.tokenizer,
-        #     768,
-        #     args['n_ctx'],
-        #     device
-        # )
 
         self.adapter = Adapter(768)
 
