@@ -2,10 +2,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-#Multi-scale Attention Network for Single Image Super-Resolution (CVPR 2024)
-#https://arxiv.org/abs/2209.14145
+
+# Multi-scale Attention Network for Single Image Super-Resolution (CVPR 2024)
+# https://arxiv.org/abs/2209.14145
 
 class LayerNorm(nn.Module):
+    r""" LayerNorm that supports two data formats: channels_last (default) or channels_first.
+        The ordering of the dimensions in the inputs. channels_last corresponds to inputs with
+        shape (batch_size, height, width, channels) while channels_first corresponds to inputs
+        with shape (batch_size, channels, height, width).
+        """
     def __init__(self, normalized_shape, eps=1e-6, data_format="channels_last"):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(normalized_shape))
@@ -26,7 +32,8 @@ class LayerNorm(nn.Module):
             x = self.weight[:, None, None] * x + self.bias[:, None, None]
             return x
 
-#Gated Spatial Attention Unit (GSAU)
+
+# Gated Spatial Attention Unit (GSAU)
 class GSAU(nn.Module):
     def __init__(self, n_feats):
         super().__init__()
@@ -42,12 +49,14 @@ class GSAU(nn.Module):
     def forward(self, x):
         shortcut = x.clone()
 
+        # Ghost Expand
         x = self.Conv1(self.norm(x))
         a, x = torch.chunk(x, 2, dim=1)
         x = x * self.DWConv1(a)
         x = self.Conv2(x)
 
         return x * self.scale + shortcut
+
 
 # multi-scale large kernel attention (MLKA)
 class MLKA(nn.Module):
@@ -61,6 +70,7 @@ class MLKA(nn.Module):
         self.norm = LayerNorm(n_feats, data_format='channels_first')
         self.scale = nn.Parameter(torch.zeros((1, n_feats, 1, 1)), requires_grad=True)
 
+        # Multiscale Large Kernel Attention
         self.LKA7 = nn.Sequential(
             nn.Conv2d(n_feats // 3, n_feats // 3, 7, 1, 7 // 2, groups=n_feats // 3),
             nn.Conv2d(n_feats // 3, n_feats // 3, 9, stride=1, padding=(9 // 2) * 4, groups=n_feats // 3, dilation=4),
@@ -95,7 +105,8 @@ class MLKA(nn.Module):
         x = self.proj_last(x * a) * self.scale + shortcut
         return x
 
-#multi-scale attention blocks (MAB)
+
+# multi-scale attention blocks (MAB)
 class MAB(nn.Module):
     def __init__(self, n_feats):
         super().__init__()
@@ -103,15 +114,17 @@ class MAB(nn.Module):
         self.LFE = GSAU(n_feats)
 
     def forward(self, x):
+        # large kernel attention
         x = self.LKA(x)
+        # local feature extraction
         x = self.LFE(x)
         return x
 
 
 if __name__ == '__main__':
-    n_feats = 3  # Must be divisible by 3
+    n_feats = 12  # Must be divisible by 3
     block = MAB(n_feats)
-    input = torch.randn(1, 3, 128, 128)
+    input = torch.randn(1, 12, 128, 128)
     output = block(input)
     print(input.size())
     print(output.size())

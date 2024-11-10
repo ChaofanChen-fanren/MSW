@@ -27,10 +27,10 @@ class VisASolver(object):
                 cls_data_phase.index = list(range(len(cls_data_phase)))
                 for idx in range(cls_data_phase.shape[0]):
                     data = cls_data_phase.loc[idx]
-                    is_abnormal = True if data[2] == 'anomaly' else False
+                    is_abnormal = True if data.iloc[2] == 'anomaly' else False
                     info_img = dict(
-                        img_path=data[3],
-                        mask_path=data[4] if is_abnormal else '',
+                        img_path=data.iloc[3],
+                        mask_path=data.iloc[4] if is_abnormal else '',
                         cls_name=cls_name,
                         specie_name='',
                         anomaly=1 if is_abnormal else 0,
@@ -42,5 +42,5 @@ class VisASolver(object):
 
 
 if __name__ == '__main__':
-    runner = VisASolver(root='data/visa')
+    runner = VisASolver(root='/Users/chenchaofan/python_project/data/VisA/')
     runner.run()

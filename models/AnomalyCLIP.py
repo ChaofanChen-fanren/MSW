@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from models import clip
 from models.clip import get_model_config
 from models.text_encoder import TextEncoder
-from models.modules import CovLayer, LinearLayer, Adapter
+from models.modules import CovLayer, LinearLayer, Adapter, MLVFusion, VisualPerceptionModule, MSW
 from models.prompt_learner import PromptLearnerNormal, PromptLearnerAbnormal
 from common import positions_list
 from torch.nn import functional as F
@@ -59,8 +59,10 @@ class AnomalyCLIP(nn.Module):
         
         # TODO: rewrite feature list
         self.feature_list = self.args.features_list
-        self.decoder_conv = CovLayer(1024, 768, 3)  # decode image features by different shape convolution
-        self.decoder_linear = LinearLayer(1024, 768, 4)  # decode image features by full connection
+        # self.decoder_conv = CovLayer(1024, 768, 3)  # decode image features by different shape convolution
+        # self.decoder_linear = LinearLayer(1024, 768, 4)  # decode image features by full connection
+
+        self.fn_linear = nn.Linear(1024, 768)
 
         # TODO rewrite learnable prompt
         if isinstance(learn_prompt_cfg, dict):
@@ -81,9 +83,12 @@ class AnomalyCLIP(nn.Module):
             n_ctx=learn_prompt_cfg.n_ctx,
         )
 
+        self.fusion = MLVFusion(d_model=1024, n_levels=4, deformable_attention=False)
+        self.visual_perception = VisualPerceptionModule(dim=768, n_alpha=1024, n_beta=1024)
+        self.multi_scale_window = MSW(dim=1024, n_levels=4)
         self.adapter = Adapter(768)
 
-    def forward(self, items, with_adapter=False, only_train_adapter=False, position=None):
+    def forward(self, items, only_train_adapter=False, position=None):
         image = items["img"]
         class_name = items["cls_name"]
 
@@ -93,8 +98,7 @@ class AnomalyCLIP(nn.Module):
                 self.feature_list
             )
 
-        if with_adapter:
-            image_features = self.adapter(image_features)
+        image_features = self.adapter(image_features)
         image_features = image_features[:, 0, :]
         image_features = image_features / image_features.norm(dim=-1, keepdim=True)
 
@@ -170,52 +174,26 @@ class AnomalyCLIP(nn.Module):
         text_features = text_features / text_features.norm()
         text_probs = image_features.unsqueeze(1) @ text_features.permute(0, 2, 1)
 
-        anomaly_maps = None
+        # feature : [6, 12, 18, 24]
+        # visual_feature
+        visual_feature_list = [element[:, 1:, :] for element in patch_tokens[::2]]
+        lower_feature = self.fusion(visual_feature_list)
+        # alpha*lower_feature + beta*high_feature
+        srcs = [image_features, lower_feature, patch_tokens[-1][:, 1:, :]]  # [(batch, dim), (batch, N, dim), (batch, N, dim)]
+        visual_feature_fusion = self.visual_perception(srcs)
+        # multi_scale_window convolution
+        out_maps = self.multi_scale_window(visual_feature_fusion)
 
-        if not only_train_adapter:
+        out_maps = self.fn_linear(out_maps)
+        anomaly_map = out_maps @ text_features.transpose(-2, -1)
+        B, L, C = anomaly_map.shape
+        H = int(np.sqrt(L))
+        anomaly_map = F.interpolate(
+            anomaly_map.permute(0, 2, 1).view(B, 2, H, H),
+            size=224,
+            mode="bilinear",
+            align_corners=True,
+        )
+        return text_probs, anomaly_map
 
-            patch_tokens_qkv = self.decoder_linear(patch_tokens[::2])
-            patch_tokens_vv = self.decoder_conv(patch_tokens[1::2])
 
-            anomaly_maps = []
-            for layer in range(len(patch_tokens_qkv)):
-                patch_tokens_qkv[layer] = patch_tokens_qkv[layer] / patch_tokens_qkv[
-                    layer
-                ].norm(dim=-1, keepdim=True)
-
-                anomaly_map = (
-                        100.0 * patch_tokens_qkv[layer] @ text_features.transpose(-2, -1)
-                )
-
-                B, L, C = anomaly_map.shape
-                H = int(np.sqrt(L))
-                anomaly_map = F.interpolate(
-                    anomaly_map.permute(0, 2, 1).view(B, 2, H, H),
-                    size=224,
-                    mode="bilinear",
-                    align_corners=True,
-                )
-                anomaly_map = torch.softmax(anomaly_map, dim=1)
-                anomaly_maps.append(anomaly_map)
-
-            for layer in range(len(patch_tokens_vv)):
-                patch_tokens_vv[layer] = patch_tokens_vv[layer] / patch_tokens_vv[
-                    layer
-                ].norm(dim=-1, keepdim=True)
-
-                anomaly_map = (
-                        100.0 * patch_tokens_vv[layer] @ text_features.transpose(-2, -1)
-                )
-
-                B, L, C = anomaly_map.shape
-                H = int(np.sqrt(L))
-                anomaly_map = F.interpolate(
-                    anomaly_map.permute(0, 2, 1).view(B, 2, H, H),
-                    size=224,
-                    mode="bilinear",
-                    align_corners=True,
-                )
-                anomaly_map = torch.softmax(anomaly_map, dim=1)
-                anomaly_maps.append(anomaly_map)
-
-        return text_probs, anomaly_maps

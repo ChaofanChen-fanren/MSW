@@ -1,7 +1,9 @@
 import torch
 from torch import nn
-#GitHub地址：https://github.com/YOLOonMe/EMA-attention-module
-#论文地址：https://arxiv.org/abs/2305.13563v2
+
+
+# GitHub地址：https://github.com/YOLOonMe/EMA-attention-module
+# 论文地址：https://arxiv.org/abs/2305.13563v2
 class EMA(nn.Module):
     def __init__(self, channels, factor=8):
         super(EMA, self).__init__()

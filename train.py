@@ -7,7 +7,7 @@ from datasets.mvtec_supervised import MVTecDataset
 from datasets.visa_supervised import VisaDataset
 import open_clip
 import torchvision.transforms as transforms
-from utils.loss import FocalLoss,BinaryDiceLoss
+from utils.loss import FocalLoss, BinaryDiceLoss
 from models import FiLo
 from tqdm import tqdm
 from prefetch_generator import BackgroundGenerator
