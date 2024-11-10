@@ -56,3 +56,4 @@
 2024-11-10 18:58:53,438 - Train Anomaly - INFO - =============prepare model==============
 2024-11-10 18:58:57,048 - Train Anomaly - INFO - =============prepare loss===============
 2024-11-10 18:58:57,049 - Train Anomaly - INFO - =============Train start==============
+2024-11-10 19:48:06,511 - Train Anomaly - INFO - =============prepare data==============

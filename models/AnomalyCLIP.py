@@ -41,6 +41,7 @@ class AnomalyCLIP(nn.Module):
                  ) -> None:
         super().__init__()
         self.args = args
+        self.image_size = args.image_size
 
         clip_image_size = get_model_config(clip_model_name)['vision_cfg']['image_size']
         # create clip model by model name and pretrained path
@@ -50,13 +51,13 @@ class AnomalyCLIP(nn.Module):
 
         # openai
         self.clip_model, _, self.preprocess = clip.create_model_and_transforms(
-            model_name=clip_model_name, pretrained="openai", img_size=clip_image_size,
+            model_name=clip_model_name, pretrained="openai", img_size=args.image_size,
         )
         self.clip_model.eval()  # frozen clip model parameters
         self.tokenizer = clip.get_tokenizer(clip_model_name)  # get tokenizer by clip model name
         self.text_encoder = TextEncoder(self.clip_model)
         self.text_encoder.eval()
-        
+
         # TODO: rewrite feature list
         self.feature_list = self.args.features_list
         # self.decoder_conv = CovLayer(1024, 768, 3)  # decode image features by different shape convolution
@@ -74,6 +75,7 @@ class AnomalyCLIP(nn.Module):
             dataset=learn_prompt_cfg.dataset,
             feature_dim=learn_prompt_cfg.feature_dim,
             n_ctx=learn_prompt_cfg.n_ctx,
+            device=device
         )
         self.abnormal_prompt_learner = PromptLearnerAbnormal(
             tokenizer=self.tokenizer,
@@ -81,6 +83,7 @@ class AnomalyCLIP(nn.Module):
             dataset=learn_prompt_cfg.dataset,
             feature_dim=learn_prompt_cfg.feature_dim,
             n_ctx=learn_prompt_cfg.n_ctx,
+            device=device
         )
 
         self.fusion = MLVFusion(d_model=1024, n_levels=4, deformable_attention=False)
@@ -179,7 +182,8 @@ class AnomalyCLIP(nn.Module):
         visual_feature_list = [element[:, 1:, :] for element in patch_tokens[::2]]
         lower_feature = self.fusion(visual_feature_list)
         # alpha*lower_feature + beta*high_feature
-        srcs = [image_features, lower_feature, patch_tokens[-1][:, 1:, :]]  # [(batch, dim), (batch, N, dim), (batch, N, dim)]
+        srcs = [image_features, lower_feature,
+                patch_tokens[-1][:, 1:, :]]  # [(batch, dim), (batch, N, dim), (batch, N, dim)]
         visual_feature_fusion = self.visual_perception(srcs)
         # multi_scale_window convolution
         out_maps = self.multi_scale_window(visual_feature_fusion)
@@ -190,7 +194,7 @@ class AnomalyCLIP(nn.Module):
         H = int(np.sqrt(L))
         anomaly_map = F.interpolate(
             anomaly_map.permute(0, 2, 1).view(B, 2, H, H),
-            size=224,
+            size=self.image_size,
             mode="bilinear",
             align_corners=True,
         )

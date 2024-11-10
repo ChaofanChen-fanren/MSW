@@ -7,6 +7,7 @@ from functools import partial
 from torch.nn import MultiheadAttention
 import torch.nn.functional as F
 
+
 class Normalize(nn.Module):
     def __init__(self, dim: int) -> None:
         super().__init__()
@@ -39,6 +40,15 @@ class Adapter(nn.Module):
             nn.Linear(c_in // reduction, c_in, bias=False),
             nn.SiLU(),
         )
+        # 随机初始化参数
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for layer in self.fc:
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight)  # 使用 Xavier 均匀分布初始化权重
+                if layer.bias is not None:
+                    nn.init.zeros_(layer.bias)  # 使用零初始化偏置
 
     def forward(self, x):
         y = self.fc(x) + x
@@ -97,12 +107,12 @@ class CovLayer(nn.Module):
                 )
                 # print(x.shape)
                 x_temp = (
-                    self.fc_11[i](x.permute(0, 3, 1, 2))
-                    + self.fc_33[i](x.permute(0, 3, 1, 2))
-                    + self.fc_55[i](x.permute(0, 3, 1, 2))
-                    + self.fc_77[i](x.permute(0, 3, 1, 2))
-                    + self.fc_15[i](x.permute(0, 3, 1, 2))
-                    + self.fc_51[i](x.permute(0, 3, 1, 2))
+                        self.fc_11[i](x.permute(0, 3, 1, 2))
+                        + self.fc_33[i](x.permute(0, 3, 1, 2))
+                        + self.fc_55[i](x.permute(0, 3, 1, 2))
+                        + self.fc_77[i](x.permute(0, 3, 1, 2))
+                        + self.fc_15[i](x.permute(0, 3, 1, 2))
+                        + self.fc_51[i](x.permute(0, 3, 1, 2))
                 )
                 tokens[i] = x_temp
                 tokens[i] = (
@@ -213,7 +223,8 @@ class MLVFusion(nn.Module):
             level_start_index_attn = torch.cat(
                 (spatial_shapes_attn.new_zeros((1,)), spatial_shapes_attn.prod(1).cumsum(0)[:-1]))
             reference_points_attn = self.get_reference_points(spatial_shapes_attn, device=attn1.device)
-            attn2 = self.self_attn(self.with_pos_embed(attn1, attn_pos), reference_points_attn, attn1, spatial_shapes_attn,
+            attn2 = self.self_attn(self.with_pos_embed(attn1, attn_pos), reference_points_attn, attn1,
+                                   spatial_shapes_attn,
                                    level_start_index_attn, None)
             attn = attn + self.gamma2 * attn2
 
@@ -246,6 +257,7 @@ class VisualPerceptionModule(nn.Module):
         super().__init__()
         self.alpha_linear = nn.Linear(dim, n_alpha)
         self.beta_linear = nn.Linear(dim, n_beta)
+        self.act = nn.GELU()
 
     def forward(self, srcs):
         x, y, z = srcs
@@ -253,7 +265,9 @@ class VisualPerceptionModule(nn.Module):
         beta = self.beta_linear(x).reshape(x.shape[0], 1, -1)
 
         # y : lower_feature, z : higher_feature
+
         tgt = alpha * y + beta * z
+        tgt = self.act(tgt) * tgt
         return tgt
 
 
@@ -325,12 +339,11 @@ class MSW(nn.Module):
         out = self.aggr(torch.cat(out, dim=1))
         out = self.act(out) * x
 
-        out = out.reshape(B, h*w, dim)
+        out = out.reshape(B, h * w, dim)
         return out
 
 
 if __name__ == "__main__":
-    
     # convLayer = CovLayer(1024, 768, 3)
     #
     # x = torch.ones(4, 4, 16*16 + 1, 1024)

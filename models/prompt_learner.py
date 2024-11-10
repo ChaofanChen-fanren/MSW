@@ -12,6 +12,7 @@ class PromptLearnerAbnormal(nn.Module):
                  dataset: str,
                  feature_dim: int,
                  n_ctx: int,
+                 device: str
                  ):
         super().__init__()
         vis_dim = ctx_dim = feature_dim
@@ -38,11 +39,13 @@ class PromptLearnerAbnormal(nn.Module):
         self.prompt_templates = PromptTemplate(dataset=dataset, abnormal=True, position=True)
         self.cls_map = self.prompt_templates.cls_map
         # prompt embedding
+        token_embedding = token_embedding.to(device)
         for cls_name, prompt_template_list in self.prompt_templates.get_prompt().items():
             prompt_template_list = [learner_prompt + " " + p for p in prompt_template_list]  # [w_1][w_2]...[w_{n_ctx}]
+            self.tokenized_prompts[cls_name] = tokenizer(prompt_template_list)
             with torch.no_grad():
-                self.tokenized_prompts[cls_name] = tokenizer(prompt_template_list)
-                embedding = token_embedding(tokenizer(prompt_template_list))  # shape [len(status), 77(token_number), ctx_dim]
+                tokenized_prompts = tokenizer(prompt_template_list).to(device)
+                embedding = token_embedding(tokenized_prompts)  # shape [len(status), 77(token_number), ctx_dim]
             self.token_prefix[cls_name] = embedding[:, :1, :]  # [len(status), 1, ctx_dim]
             self.token_suffix[cls_name] = embedding[:, 1 + n_ctx:, :]  # [len(status), 77-n_ctx-1, ctx_dim]
             # WARNING: make sure to not require grad, Parameters that are not added to nn.Parameter are generally not auto-updated
@@ -111,6 +114,7 @@ class PromptLearnerNormal(nn.Module):
                  dataset: str,
                  feature_dim: int,
                  n_ctx: int,
+                 device: str,
                  ):
         super().__init__()
         vis_dim = ctx_dim = feature_dim
@@ -129,7 +133,7 @@ class PromptLearnerNormal(nn.Module):
                 ("linear2", nn.Linear(vis_dim // 16, ctx_dim)),
             ])
         )
-
+        token_embedding = token_embedding.to(device)
         # PromptTemplate
         self.token_prefix = {}
         self.token_suffix = {}
@@ -141,7 +145,8 @@ class PromptLearnerNormal(nn.Module):
             prompt_template_list = [learner_prompt + " " + p for p in prompt_template_list]  # [w_1][w_2]...[w_{n_ctx}]
             self.tokenized_prompts[cls_name] = tokenizer(prompt_template_list)
             with torch.no_grad():
-                embedding = token_embedding(tokenizer(prompt_template_list))  # shape [len(status), 77(token_number), ctx_dim]
+                tokenized_prompts = tokenizer(prompt_template_list).to(device)
+                embedding = token_embedding(tokenized_prompts)  # shape [len(status), 77(token_number), ctx_dim]
             self.token_prefix[cls_name] = embedding[:, :1, :]  # [len(status), 1, ctx_dim]
             self.token_suffix[cls_name] = embedding[:, 1 + n_ctx:, :]  # [len(status), 77-n_ctx-1, ctx_dim]
             # WARNING: make sure to not require grad, Parameters that are not added to nn.Parameter are generally not auto-updated
