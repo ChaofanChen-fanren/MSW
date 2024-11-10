@@ -1,0 +1,18 @@
+INFO:root:Start of the program
+INFO:__main__:Finished
+INFO:root:Start of the program
+INFO:__main__:Finished
+INFO:__main__:Start of the program
+INFO:__main__:Finished
+INFO:Train:Start of the program
+INFO:Train:Finished
+INFO:root:Start of the program
+INFO:root:Finished
+2024-11-10 14:39:03,963 INFO Start of the program
+2024-11-10 14:39:03,963 INFO Finished
+2024-11-10 14:39:29,609:INFO:Start of the program
+2024-11-10 14:39:29,609:INFO:Finished
+2024-11-10 14:39:57,581>>INFO:Start of the program
+2024-11-10 14:39:57,581>>INFO:Finished
+2024-11-10 14:40:04,800>>>INFO:Start of the program
+2024-11-10 14:40:04,800>>>INFO:Finished

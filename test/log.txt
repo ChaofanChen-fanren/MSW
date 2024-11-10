@@ -1,0 +1,4 @@
+2024-11-10 16:23:18,239 - Train Anomaly - INFO - Start of the program
+2024-11-10 16:23:18,239 - Train Anomaly - INFO - Finished
+2024-11-10 16:24:09,250 - Train Anomaly - INFO - Start of the program
+2024-11-10 16:24:09,250 - Train Anomaly - INFO - Finished

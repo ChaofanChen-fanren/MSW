@@ -1,1 +1,1 @@
-from loss import FocalLoss,BinaryDiceLoss
+from .loss import FocalLoss, BinaryDiceLoss

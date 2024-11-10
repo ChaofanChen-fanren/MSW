@@ -14,6 +14,9 @@ args.features_list = [6, 12, 18, 24]
 model = AnomalyCLIP(
     clip_model_name="ViT-L-14",
     clip_pretrained_path="../pretrained_models", learn_prompt_cfg=learn_prompt_cfg, args=args, device='cpu')
+# pa = model.parameters()
+for name, param in model.named_parameters():
+    print(f"Moudle: {name}, Parameter shape:{param.shape}， requires_grad = {param.requires_grad}")
 
 # model = AnomalyCLIP(
 #     clip_model_name="ViT-H-14",

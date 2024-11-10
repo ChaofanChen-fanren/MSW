@@ -167,6 +167,7 @@ class PromptLearnerNormal(nn.Module):
         return prompts
 
     def forward(self, im_features, class_name):
+        # TODO: support batch_size > 1
         class_name = self.cls_map[class_name]
 
         ctx = self.ctx
