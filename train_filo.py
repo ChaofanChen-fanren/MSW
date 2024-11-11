@@ -5,7 +5,7 @@ import numpy as np
 import random
 import logging
 from prefetch_generator import BackgroundGenerator
-from models import clip, AnomalyCLIP
+from models import clip, FiLo
 import torchvision.transforms as transforms
 from datasets import Dataset
 from utils import FocalLoss, BinaryDiceLoss
@@ -91,109 +91,118 @@ def train(args):
         'n_ctx': args.n_ctx,
         'device': device
     }
-    model = AnomalyCLIP(
-        clip_model_name=args.clip_model,
-        clip_pretrained_path=args.clip_pretrained,
-        learn_prompt_cfg=learn_prompt_cfg,
-        args=args,
-        device=device)
-    model.to(device)
+    filo_model = FiLo(learn_prompt_cfg, args, device).to(device)
 
-    param_group = []
-    for name, param in model.named_parameters():
-        if "clip_model" in name:
-            param.requires_grad = False
-        elif "adapter" in name or "fn_linear" in name:
-            param_group.append({"params": param, 'lr': args.learning_rate})
-        else:
-            param_group.append({"params": param, 'lr': 0.001})
-    optimizer = torch.optim.AdamW(
-        param_group,
+    main_part_param_groups = [
+        {'params': filo_model.decoder_cov.parameters(), 'lr': args.decoder_learning_rate},
+        {'params': filo_model.decoder_linear.parameters(), 'lr': args.decoder_learning_rate},
+        {'params': filo_model.normal_prompt_learner.parameters(), 'lr': args.learning_rate},
+        {'params': filo_model.abnormal_prompt_learner.parameters(), 'lr': args.learning_rate}
+    ]
+
+    optimizer_main_part = torch.optim.AdamW(
+        main_part_param_groups,
+        betas=(0.5, 0.999),
+    )
+
+    adapter_param_groups = [
+        {'params': filo_model.adapter.parameters(), 'lr': args.adapter_learning_rate},
+    ]
+
+    optimizer_adapter = torch.optim.AdamW(
+        adapter_param_groups,
         betas=(0.5, 0.999),
     )
 
     logger.info("=============prepare loss===============")
-    losses_focal = FocalLoss()
+    loss_focal = FocalLoss()
     loss_dice = BinaryDiceLoss()
 
     logger.info("=============Train start==============")
     for epoch in range(epochs):
-        loss_list = []
-        image_loss_list = []
+        pixel_loss_list = []
         for items in tqdm(train_dataloader):
-            items["img"] = items["img"].to(device)
-            items["cls_name"] = items["cls_name"][0]
-            label = items['anomaly'].to(device)
-
-            gt = items['img_mask'].squeeze().to(device)
-            gt[gt > 0.5] = 1
-            gt[gt <= 0.5] = 0
-
-            text_probs, anomaly_maps = model(items)
-            # 检查 text_probs 和 anomaly_maps 是否包含 NaN
-            if torch.isnan(text_probs).any():
-                print("text_probs contains NaN values.")
-
-            if torch.isnan(anomaly_maps).any():
-                print("anomaly_maps contains NaN values.")
+            # image = items["img"].to(device)
+            # cls_name = items["cls_name"][0]
+            # image_path = items["img_path"]
+            # anomaly_cls = items["anomaly_class"][0]
+            # label = items['anomaly'].to(device)
+            text_probs, anomaly_maps = filo_model(items, with_adapter=False)
 
             # losses
-            gt = items["img_mask"].squeeze(1).to(device)
+            gt = items["img_mask"].squeeze().to(device)
             gt[gt > 0.5], gt[gt <= 0.5] = 1, 0
+            pixel_loss = 0
+            for num in range(len(anomaly_maps)):
+                pixel_loss += loss_focal(anomaly_maps[num], gt)
+                pixel_loss += loss_dice(anomaly_maps[num][:, 1, :, :], gt)
+                pixel_loss += loss_dice(anomaly_maps[num][:, 0, :, :], 1 - gt)
 
-            text_probs = text_probs[:, 0, ...] / 0.07  # text_probs:[B, C]  label:[B]
-            image_loss = F.cross_entropy(text_probs, label.long())
+            optimizer_main_part.zero_grad()
+            pixel_loss.backward()
+            optimizer_main_part.step()
 
-            pixel_loss = torch.tensor(0.0).to(device)
-            # for num in range(len(anomaly_maps)):
-            #     pixel_loss += losses_focal(anomaly_maps[num], gt)
-            #     pixel_loss += loss_dice(anomaly_maps[num][:, 1, :, :], gt)
-            #     pixel_loss += loss_dice(anomaly_maps[num][:, 0, :, :], 1 - gt)
-            pixel_loss += losses_focal(anomaly_maps, gt)
-            pixel_loss += loss_dice(anomaly_maps[:, 1, :, :], gt)
-            pixel_loss += loss_dice(anomaly_maps[:, 0, :, :], 1 - gt)
-
-            optimizer.zero_grad()
-            (pixel_loss + image_loss).backward()
-            optimizer.step()
-            image_loss_list.append(image_loss.item())
-            loss_list.append(pixel_loss.item())
+            pixel_loss_list.append(pixel_loss.item())
 
         # logs
         if (epoch + 1) % args.print_freq == 0:
-            logger.info(
-                'epoch [{}/{}], loss:{:.4f}, image_loss:{:.4f}'.format(epoch + 1, args.epoch, np.mean(loss_list),
-                                                                       np.mean(image_loss_list)))
+            logger.info('epoch [{}/{}], pixel_loss:{:.4f}'.format(epoch + 1, args.epoch, np.mean(pixel_loss_list)))
+
+    for epoch in range(args.adapter_epoch):
+        image_loss_list = []
+        for items in tqdm(train_dataloader):
+            # image = items["img"].to(device)
+            # cls_name = items["cls_name"][0]
+            # image_path = items["img_path"]
+            # anomaly_cls = items["anomaly_class"][0]
+            label = items['anomaly'][0].to(device)
+            text_probs, anomaly_maps = filo_model(items, only_train_adapter=True, with_adapter=True)
+
+            # losses
+            text_probs = text_probs[:, 0, ...] / 0.07
+            image_loss = F.cross_entropy(text_probs.squeeze(), label)
+
+            optimizer_adapter.zero_grad()
+            image_loss.backward()
+            optimizer_adapter.step()
+
+            image_loss_list.append(image_loss.item())
+
+        # logs
+        if (epoch + 1) % args.print_freq == 0:
+            logger.info('epoch [{}/{}], img_loss:{:.4f}'.format(epoch + 1, args.epoch, np.mean(image_loss_list)))
 
         # save model
         if (epoch + 1) % args.save_freq == 0:
             save_name = os.path.join(args.save_path, dataset_name)
             ckp_path = os.path.join(save_name, 'epoch_' + str(epoch + 1) + '.pth')
-            torch.save({"model": model.state_dict()}, ckp_path)
+            torch.save({"filo": filo_model.state_dict()}, ckp_path)
     logger.info("=============Train end==============")
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("AnomalyCLIP", add_help=True)
     # parser.add_argument("--train_data_path", type=str, default="./data/visa", help="train dataset path")
-    parser.add_argument("--save_path", type=str, default='./checkpoint', help='path to save results')
+    parser.add_argument("--save_path", type=str, default='./checkpoint/filo', help='path to save results')
     parser.add_argument("--clip_model", type=str, default="ViT-L-14-336", help="clip model name")
     parser.add_argument("--clip_pretrained", type=str, default="openai", help="pretrained clip model wight path")
 
-    parser.add_argument("--dataset_path", type=str, default='/root/autodl-tmp/MSW/data/Visa', help="train dataset path")
+    parser.add_argument("--dataset_path", type=str, default='/Users/chenchaofan/python_project/data/VisA', help="train dataset path")
     parser.add_argument("--dataset", type=str, default='visa', help="train dataset name")
 
     parser.add_argument("--n_ctx", type=int, default=12, help="zero shot")
     parser.add_argument("--features_list", type=int, nargs="+", default=[6, 12, 18, 24], help="features used")
 
     parser.add_argument("--epoch", type=int, default=15, help="epochs")
-    parser.add_argument("--learning_rate", type=float, default=0.000001, help="learning rate")
+    parser.add_argument("--learning_rate", type=float, default=0.001, help="learning rate")
+    parser.add_argument("--decoder_learning_rate", type=float, default=0.0001, help="learning rate for decoder")
+    parser.add_argument("--adapter_learning_rate", type=float, default=0.00001, help="learning rate for adapter")
     parser.add_argument("--batch_size", type=int, default=1, help="batch size")
     parser.add_argument("--image_size", type=int, default=518, help="image size")
     parser.add_argument("--print_freq", type=int, default=1, help="print frequency")
     parser.add_argument("--save_freq", type=int, default=1, help="save frequency")
     parser.add_argument("--seed", type=int, default=111, help="random seed")
-    parser.add_argument("--device", type=str, default="cuda", help="running on cpu only!, default=False")
+    parser.add_argument("--device", type=str, default="cpu", help="running on cpu only!, default=False")
     args = parser.parse_args()
     setup_seed(args.seed)
     train(args)
